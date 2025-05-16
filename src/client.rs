@@ -4,12 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::SystemTime;
 
-//I want to write the interface with an MQTT broker, not the actual MQTT
-//broker itself
-//There is a set of invariants to uphold:
-//Invariants for working with the MQTT broker
-//Invariants for how we want our communication to operate.
-
+static MAX_BATCH: usize = 100;
 //Simple stand-in for real mqtt
 pub trait MqqtBroker {
     fn mqtt_publish(message_batch: MessageBatch) -> Option<usize>;
@@ -58,6 +53,10 @@ impl MessageBatch {
             message.print_message();
         }
     }
+
+    pub fn len(&self) -> usize{
+        self.messages.len()
+    }
 }
 
 pub struct Client<T: MqqtBroker> {
@@ -77,30 +76,24 @@ impl<T: MqqtBroker> Client<T> {
             batch_count: 0,
             join_handle: None,
             broker: PhantomData,
-            // broker,
-            // broker,
         }
     }
     pub fn send_telemetry(&mut self, message: Message) {
         let batch_id = self.get_batch_id();
         let mut backlog = self.backlog_mutex.lock().unwrap();
         println!("main thread has backlog");
-        if (*backlog).is_empty() {
-            //create new messagebatch and append it to the backlog
+        if backlog.is_empty() {
+            //create new MessageBatch and append it to the backlog
             println!("spinning up thread");
             backlog.push_back(MessageBatch::new(message, self.device_id.clone(), batch_id));
             let new_back = self.backlog_mutex.clone();
             self.join_handle = Some(thread::spawn(move || Self::send_batches(new_back)));
-        } else if (*backlog).len() == 1 {
+        } else if backlog.len() == 1 || backlog.back().unwrap().len() >= MAX_BATCH {
             println!("Case 1");
             backlog.push_back(MessageBatch::new(message, self.device_id.clone(), batch_id));
         } else {
-            backlog[1].append_message(message);
+            backlog.back_mut().unwrap().append_message(message);
         }
-
-        //batch message with others
-        //put in queue to be sent over
-        // thread::sleep(Duration::new(1,0));
     }
 
     fn get_batch_id(&mut self) -> usize {
@@ -110,7 +103,6 @@ impl<T: MqqtBroker> Client<T> {
 
     fn send_batches(backlog_mutex: Arc<Mutex<VecDeque<MessageBatch>>>) {
         //spin off thread to print each value of the vector, one by one, then terminate the thread.
-        // println!("{:?}", backlog.pop());]
         let mut has_some = true;
 
         while has_some {
@@ -119,10 +111,7 @@ impl<T: MqqtBroker> Client<T> {
                 backlog[0].clone()
             };
 
-            // let the_broker: T  = broker.lock().unwrap().clone();
-
-            let result = T::mqtt_publish(message_batch);
-
+            let result = T::mqtt_publish(message_batch); //this assumes a failed publish returns None, which is not how it would be 
             {
                 let mut backlog = backlog_mutex.lock().unwrap();
                 if result.is_some() {
