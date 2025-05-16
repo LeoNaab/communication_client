@@ -1,0 +1,1 @@
+This is just a simple mockup of a client that batches messages to be sent through an MQTT service.
